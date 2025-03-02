@@ -10,7 +10,7 @@ import os
 # `main.py` のあるディレクトリを取得
 base_dir = os.path.dirname(os.path.abspath(__file__))
 # assets フォルダのLRCファイルを指定
-lrc_file_path = os.path.join(base_dir, "assets", "shape_of_you.lrc")
+lrc_file_path = os.path.join(base_dir, "assets", "time_after_time.lrc")
 # load title, artist, lyrics, timestamp
 title, artist, lyrics = load_lrc(lrc_file_path)
 
@@ -40,7 +40,7 @@ while running:
         # 🎵 **現在の時間に一番近いインデックスを取得**
         current_index = 0
         for i, (timestamp, text, ltype) in enumerate(lyrics):
-            if timestamp > current_time - 1.8:  # ⏳ **2秒前に歌詞を表示**
+            if timestamp > current_time:  # ⏳ **2秒前に歌詞を表示**
                 current_index = max(0, i)  # 少し前の行を選択
                 break
 
@@ -48,18 +48,23 @@ while running:
         if current_index == 0 and current_time < lyrics[0][0]:
             display_lyrics = lyrics[:4]  # 🎶 最初の4行を表示
         else:
-            display_lyrics = lyrics[max(0, current_index - 2) : current_index + 4]  # 📜 前後2行 + 現在の行
+            display_lyrics = lyrics[max(0, current_index - 3) : current_index + 6]  # 📜 前後2行 + 現在の行
 
         # 🎵 **画面に表示**
         y_pos = 200  # 最初の行のY座標
         for i, (_, text, ltype) in enumerate(display_lyrics):
             # 🎶 **最初の歌詞が始まるまで白**
             if current_index == 0:
-                color = (255, 255, 255)  # 🔥 すべて白
-            elif i == 2:  # 🔥 **現在の歌詞**
+                if i == 0:
+                    color = (100, 200, 255)  # 水色
+                elif i == 1:
+                    color = (255, 255, 255)  # 🔥 すべて白
+                else:
+                    color = (150, 150, 150) 
+            elif i == 1 or i == 2:  # 🔥 **現在の歌詞**
                 color = (255, 255, 255)  # 白
-            elif ltype == "chord":  # 🎸 **コード**
-                color = (100, 200, 255)  # 水色
+                if ltype == "chord":  # 🎸 **コード**
+                    color = (100, 200, 255)  # 水色
             else:  # 🔘 **前後の歌詞**
                 color = (150, 150, 150)  # グレー
 

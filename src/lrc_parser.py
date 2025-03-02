@@ -1,6 +1,11 @@
 import re
 import pygame
 
+def detect_line_type(lines, index):
+    if index > 0 and lines[index - 1].strip() == "":
+        return "chord"
+    return "lyric"
+
 # LRCファイルを読み込む（コードも含める）
 def load_lrc(file_path):
     lyrics = []

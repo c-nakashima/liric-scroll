@@ -36,7 +36,7 @@ def get_current_playback_time():
             return playback['progress_ms'] / 1000  # ミリ秒を秒に変換
     except Exception as e:
         print("Error getting playback time:", e)
-    return None
+    return 0
 
 # def sync_playback_with_spotify():
 #   try:

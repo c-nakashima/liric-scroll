@@ -1,81 +1,171 @@
-import pygame
-import time
-from lrc_parser import load_lrc  # 歌詞の読み込み関数
-from spotify import get_current_track, get_current_playback_time, get_current_track  # Spotifyの現在の曲を取得
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtCore import QTimer, QObject, pyqtSlot
+import json
+import sys # - deal with command line argument(sys.argv)。 Terminate program with sys.exit().
 import os
+from src.spotify import get_current_playback_time
 
 
-# == Getting Lyrics ====================
-# -- Gettig the base directry
-# `main.py` のあるディレクトリを取得
-base_dir = os.path.dirname(os.path.abspath(__file__))
-# assets フォルダのLRCファイルを指定
-lrc_file_path = os.path.join(base_dir, "assets", "time_after_time.lrc")
-# load title, artist, lyrics, timestamp
-title, artist, lyrics = load_lrc(lrc_file_path)
+# Send data from Python to JavaScript
+class LyricsBridge(QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.lyrics = []
 
-# Pygame の初期化
-# 画面設定
-pygame.init()
-screen = pygame.display.set_mode((800, 600))
-font = pygame.font.Font(None, 36)  # フォントサイズ36
-clock = pygame.time.Clock()
+    @pyqtSlot(str)
+    # Method that can be called from JavaScript
+    def set_lyrics(self, lyrics_json):
+        print("Received lyrics from JS:", lyrics_json)
 
-# 背景色
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
+    @pyqtSlot(result=str)
+    # Pass lyric data to JavaScript
+    def get_lyrics(self):
+        lyrics_json = json.dumps(self.lyrics)
+        return lyrics_json
 
-# 歌詞のスクロール用変数
-current_line = 0
-start_time = time.time()  # 再生開始時間
 
-running = True
-while running:
-    screen.fill((0, 0, 0))  # 背景を黒にする
-    
-    # 🎵 **Spotifyの現在の再生時間を取得**
-    current_time = get_current_playback_time()
-    
-    if current_time is not None:
-        # 🎵 **現在の時間に一番近いインデックスを取得**
-        current_index = 0
-        for i, (timestamp, text, ltype) in enumerate(lyrics):
-            if timestamp > current_time:  # ⏳ **2秒前に歌詞を表示**
-                current_index = max(0, i)  # 少し前の行を選択
-                break
+# Sync displaying liric with playing with spotify
+class LyricsSync(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Spotify Lyrics Sync")
+        self.setGeometry(100, 100, 600, 400)
 
-        # 🎵 **最初の歌詞が始まるまでは、すべてグレーで表示**
-        if current_index == 0 and current_time < lyrics[0][0]:
-            display_lyrics = lyrics[:4]  # 🎶 最初の4行を表示
-        else:
-            display_lyrics = lyrics[max(0, current_index - 3) : current_index + 6]  # 📜 前後2行 + 現在の行
+        # WebEngineView config
+        self.browser = QWebEngineView(self)
+        self.channel = QWebChannel()
+        self.bridge = LyricsBridge()
+        self.channel.registerObject("lyricsBridge", self.bridge)
+        self.browser.page().setWebChannel(self.channel)
 
-        # 🎵 **画面に表示**
-        y_pos = 200  # 最初の行のY座標
-        for i, (_, text, ltype) in enumerate(display_lyrics):
-            # 🎶 **最初の歌詞が始まるまで白**
-            if current_index == 0:
-                if i == 0:
-                    color = (100, 200, 255)  # 水色
-                elif i == 1:
-                    color = (255, 255, 255)  # 🔥 すべて白
-                else:
-                    color = (150, 150, 150) 
-            elif i == 1 or i == 2:  # 🔥 **現在の歌詞**
-                color = (255, 255, 255)  # 白
-                if ltype == "chord":  # 🎸 **コード**
-                    color = (100, 200, 255)  # 水色
-            else:  # 🔘 **前後の歌詞**
-                color = (150, 150, 150)  # グレー
+        # UI layout
+        layout = QVBoxLayout()
+        layout.addWidget(self.browser)
+        self.setLayout(layout)
 
-            text_surface = font.render(text, True, color)
-            screen.blit(text_surface, (100, y_pos))
-            y_pos += 50  # 50ピクセル下にずらす
+        # load HTML
+        self.browser.setHtml(self.generate_html())
 
-    # Pygameイベント処理
-    for event in pygame.event.get():
-      if event.type == pygame.QUIT:
-          running = False
+        # full path to `time_after_time.lrc`
+        lrc_file_path = os.path.join(os.path.dirname(__file__), "assets", "time_after_time.lrc")
 
-    pygame.display.flip()  # 画面を更新
-    clock.tick(30)  # 30FPS
+        # load LRC file
+        self.bridge.lyrics = [line for line in self.load_lrc(lrc_file_path) if line["time"] is not None]
+        self.current_index = 0  # current lyric index
+
+        # reload each 1 sec
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_lyrics)
+        self.timer.start(1000)
+
+    # HTML displayed in QWebEngineView 
+    def generate_html(self):
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+            <style>
+                body { background-color: black; color: white; font-size: 20px; padding: 20px; }
+                #lyrics { transition: transform 0.5s ease-in-out; }
+                .highlight { color: yellow; font-weight: bold; }
+            </style>
+            <script>
+                console.log("Script Loaded");
+                var lyrics = [];
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    console.log("QWebChannel initialized");
+                    channel.objects.lyricsBridge.get_lyrics().then(function(lyricsJson) {
+                        console.log("Received Lyrics:", lyricsJson);
+                        lyrics = JSON.parse(lyricsJson);  // ✅ Promise の結果を受け取ってパース
+                        updateLyrics();
+                    }).catch(function(error) {
+                        console.error("Error fetching lyrics:", error);
+                    });
+                });
+
+                function updateLyrics() {
+                    console.log("Updating lyrics in HTML");  // 🔍 デバッグ出力
+                    let html = "";
+                    lyrics.forEach((line, index) => {
+                        html += `<p id="line-${index}">${line.text}</p>`;
+                    });
+                    document.getElementById("lyrics").innerHTML = html;
+                }
+
+                function scrollToLine(index) {
+                    let element = document.getElementById("line-" + index);
+                    if (element) {
+                        window.scrollTo({ top: element.offsetTop - 100, behavior: 'smooth' });
+                        element.classList.add("highlight");
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div id="lyrics"></div>
+        </body>
+        </html>
+        """
+
+    # load lrc file
+    # Create timestamp and lyric list
+    def load_lrc(self, file_path):
+        lyrics = []
+        with open(file_path, "r", encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if not line.startswith("[") or ":" not in line:
+                    continue  # skip metadata
+
+                parts = line.split("]", 1)
+                if len(parts) < 2:
+                    continue  # skip incorrect data
+
+                timestamp = parts[0][1:]  # [00:14.59] → 00:14.59
+                lyrics_text = parts[1].strip()
+
+                # parce time data
+                try:
+                    minutes, seconds = map(float, timestamp.split(":"))
+                    time_in_seconds = minutes * 60 + seconds
+                    lyrics.append({"time": time_in_seconds, "text": lyrics_text})
+                except (ValueError, IndexError):
+                    continue  # skip incorrect time data
+
+        return lyrics
+
+
+    # load current timestamp from Spotify API
+    def get_spotify_playback_time(self):
+        return 90  # example：90secs #TODO example data
+
+
+    def find_next_lyrics_index(self):
+        current_time = get_current_playback_time()
+        # current_time = self.get_spotify_playback_time()
+        print('current_time',current_time)
+
+        for i, line in enumerate(self.bridge.lyrics):
+            time_value = line.get("time")
+            if time_value is not None and time_value > current_time:
+                return i
+
+        return len(self.bridge.lyrics) - 1
+
+
+    # Highlight lyric aligning Spotify's timestamp
+    def update_lyrics(self):
+        index = self.find_next_lyrics_index()
+        print(f"Scrolling to line {index}")  # デバッグ用
+        self.browser.page().runJavaScript(f"scrollToLine({index})")
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = LyricsSync()
+    window.show()
+    app.exec()

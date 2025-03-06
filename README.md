@@ -1,2 +1,2 @@
-# liric-scroll
-Liric scroll application
+# lyric-scroll
+Lyric scroll application
